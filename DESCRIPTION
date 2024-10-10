@@ -1,0 +1,12 @@
+Package: GBMnat
+Type: Package
+Title: GBM Correlative analysis
+Version: 0.1.0
+Author@R:
+  person(given = "Xiqi",family="Li",role=c("aut","cre"),
+            email="xli23@mdanderson.org")
+Maintainer: Xiqi Li <xli23@mdanderson.org>
+Description: Codes used for genomic, transcriptomic and multiplex immunofluorescence imaging analysis
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
