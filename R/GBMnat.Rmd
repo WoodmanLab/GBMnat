@@ -1,0 +1,741 @@
+---
+title: "GBMnat"
+author: "XL"
+date: "2024-10-18"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(dplyr)
+
+```
+
+## Efficacy
+
+```{r Efficacy}
+require(grid)
+load(file.path("..","deID_clinical_info_60.RData"))
+clinical_info=clinical_info.60%>%filter(IDH!="M")
+rownames(clinical_info)=clinical_info$patientID
+#---- median OS including IDH-mut ----
+mOS=getKM_medium(
+  survdf=clinical_info.60,
+  duration="Survival_days",
+  censoring = "Status",
+  conversion="d2m")
+mOS
+
+#---- mOS IDH-wt 56 patients ----
+
+mOS=getKM_medium(
+  survdf=clinical_info,
+  duration="Survival_days",
+  censoring = "Status",
+  conversion="d2m")
+mOS
+
+#---- KM - IDH-wt 56 patients all variates Figure S1----
+annotateTextSize=8.5
+KMs=list()
+
+for(duration in c("Survival_days","PFS")){
+  censoring=setNames(c("Status","Progression_event"),c("Survival_days","PFS"))[duration]
+  timeYLab=setNames(c("OS","PFS"),c("Survival_days","PFS"))[duration]
+  KM.overall=plotKM(
+    survdf=clinical_info,
+    duration=duration,
+    censoring=censoring,
+    table_base_size=annotateTextSize,
+    timeYLab=timeYLab)
+  mOS.overall=getKM_medium(
+    survdf=clinical_info,
+    duration=duration,
+    censoring = censoring,
+    conversion="d2m",
+    )
+  KM.MGMT=plotKM(
+    survdf=clinical_info%>%filter(MGMT!="Unknown "),
+    duration=duration,
+    censoring = censoring,
+    conversion="d2m",
+    variable = "MGMT",
+    table_base_size=annotateTextSize,
+    timeYLab=timeYLab)
+  mOS.MGMT=getKM_medium(
+    survdf=clinical_info%>%filter(MGMT!="Unknown "),
+    duration=duration,
+    censoring = censoring,
+    conversion="d2m",
+    variable = "MGMT")
+  KM.STR=plotKM(
+    survdf = clinical_info %>% dplyr::rename("GTR_STR"="GTR or STR/Bx"), 
+    duration = duration,
+    censoring = censoring,
+    variable = "GTR_STR",
+    conversion = "d2m",
+    table_base_size=annotateTextSize,
+    timeYLab=timeYLab)
+  mOS.STR=getKM_medium(
+    survdf=clinical_info,
+    duration=duration,
+    censoring = censoring,
+    conversion="d2m",
+    variable = "GTR or STR/Bx")
+  medAge=median(clinical_info$AGE)
+  KM.age=plotKM(
+    survdf = clinical_info %>% mutate(Age=ifelse(AGE >= median(AGE),sprintf("≥ median (%s)",medAge),sprintf("< median (%s)",medAge))),
+    duration = duration,
+    censoring = censoring,
+    variable = "Age",
+    conversion = "d2m",
+    table_base_size=annotateTextSize,
+    timeYLab=timeYLab)
+  mOS.age=getKM_medium(
+    survdf=clinical_info %>% mutate(Age=ifelse(AGE >= median(AGE),sprintf("≥ median (%s)",medAge),sprintf("< median (%s)",medAge))),
+    duration=duration,
+    censoring = censoring,
+    conversion="d2m",
+    variable = "Age")
+  KM.sex=plotKM(
+    survdf = clinical_info %>% mutate(Sex=GENDER),
+    duration = duration,
+    censoring = censoring,
+    variable = "Sex",
+    conversion = "d2m",
+    table_base_size=annotateTextSize,
+    timeYLab=timeYLab)
+  mOS.sex=getKM_medium(
+    survdf=clinical_info %>%  mutate(Sex=GENDER),
+    duration=duration,
+    censoring = censoring,
+    conversion="d2m",
+    variable = "Sex")
+  KM.dexamethasone=plotKM(
+    survdf = clinical_info,
+    duration = duration,
+    censoring = censoring,
+    variable = "dexamethasone",
+    conversion = "d2m",
+    table_base_size=annotateTextSize,
+    timeYLab=timeYLab)
+  mOS.dexamethasone=getKM_medium(
+    survdf=clinical_info %>%  mutate(Sex=GENDER),
+    duration=duration,
+    censoring = censoring,
+    conversion="d2m",
+    variable = "dexamethasone")
+  
+ KMs[[duration]]=arrangeGrob(
+    KM.overall%>%print()%>% grid.grabExpr,
+    KM.MGMT%>%print()%>% grid.grabExpr,
+    KM.STR%>%print()%>% grid.grabExpr,
+    KM.age%>%print()%>% grid.grabExpr,
+    KM.sex%>%print()%>% grid.grabExpr,
+    KM.dexamethasone%>%print()%>% grid.grabExpr,
+    ncol=1)
+}
+
+grid.arrange(KMs$Survival_days,KMs$PFS,nrow=1)
+
+# ggsave(arrangeGrob(KMs$Survival_days,KMs$PFS,nrow=1),file=file.path("FS1_clinical_KMs.svg"),height = 30,width = 9)
+
+
+
+#---- mOS for MGMT IDH-wt 56 patients ----
+mOS=getKM_medium(
+  survdf=clinical_info,
+  variable = "MGMT",
+  duration="Survival_days",
+  censoring = "Status",
+  conversion="d2m")
+mOS
+
+```
+
+## Somatic mutation and copy number profiles were consistent with known aberrations in GBM
+
+```{r mutation}
+DNA_sample_info=R.utils::loadToEnv(file.path("..","deID_sample_info.RData"))[["sample_info"]][["DNA_sample_info"]]
+DNA_sample_info=left_join(DNA_sample_info,clinical_info)
+
+#---- oncoplot ----
+
+load(file.path("..","deID_nonsilent.n29.RData"))
+MDLcalls=R.utils::loadToEnv(file.path("..","deID_MDLcalls.RData"))[["MDLcalls"]]
+
+
+
+# set variant classification for MDL calls
+genes=unique(MDLcalls$gene_name)
+MDLcalls = MDLcalls %>% mutate(Variant_Classification=NA)
+
+tmpALT=MDLcalls[["alteration_union"]]
+tmpVC=MDLcalls[["Variant_Classification"]]
+tmpVC=replace(tmpVC,grepl("-146C>T|",tmpALT),"5'Flank")
+tmpVC=replace(tmpVC,grepl("c.1814+1G>A",tmpALT),"Intron")
+tmpVC=replace(tmpVC,grepl("-124C>T",tmpALT),"5'Flank")
+
+tmpVC=replace(tmpVC,grepl("c\\.",tmpALT)& !grepl("c.-146C>T|c.1814+1G>A|c.-124C>T",tmpALT),"Splice_Site")
+tmpVC=replace(tmpVC,grepl("fs",tmpALT),"Frame_Shift")
+tmpVC=replace(tmpVC,grepl("[A-Z][[:digit:]]+\\*",tmpALT),"Nonsense_Mutation")
+tmpVC=replace(tmpVC,grepl("ins",tmpALT),"In_Frame_Ins")
+tmpVC=replace(tmpVC,grepl("del",tmpALT),"In_Frame_Del")
+tmpVC=replace(tmpVC,grepl("[A-Z][[:digit:]]+[A-Z]",tmpALT),"Missense_Mutation")
+tmpVC=replace(tmpVC,grepl("[A-Z][[:digit:]]+[A-Z]",tmpALT)&
+                substr(tmpALT,1,1)==substr(tmpALT,nchar(tmpALT),nchar(tmpALT)),"Silent")
+tmpVC=replace(tmpVC,grepl("Rearrangement",tmpALT),"Rearrangement")
+
+MDLcalls[["Variant_Classification"]]=tmpVC
+MDLcalls=MDLcalls%>% filter(Variant_Classification!="Silent")
+
+# combine WES and MDL calls
+WEScalls=snp_indels%>%dplyr::select(Tumor_Sample_Barcode,Hugo_Symbol,Protein_Change,Variant_Classification)
+WEScalls$Protein_Change[WEScalls$Protein_Change==""]=WEScalls$Variant_Classification[WEScalls$Protein_Change==""]
+WEScalls=WEScalls %>% dplyr::rename("Sample_ID"="Tumor_Sample_Barcode") %>% left_join(DNA_sample_info[,c("Sample_ID","patientID")],.) %>%
+  dplyr::select(patientID,Hugo_Symbol,Protein_Change,Variant_Classification) %>%
+  filter(Hugo_Symbol %in% genes)
+
+combinedCalls=tmp=rbind(
+  WEScalls[,c("patientID","Hugo_Symbol","Protein_Change","Variant_Classification")] %>%
+    mutate(Protein_Change=gsub("p.","",Protein_Change,fixed=T),
+           Variant_Classification=gsub("Frame_Shift_Del|Frame_Shift_Ins","Frame_Shift",Variant_Classification),
+           source="researchCall") %>%
+    mutate(Protein_Change=gsub("X","*",Protein_Change,fixed=T)),
+  MDLcalls[,c("patientID","gene_name","alteration_union","Variant_Classification")] %>%
+    dplyr::rename("Hugo_Symbol"="gene_name","Protein_Change"="alteration_union") %>% 
+    mutate(source="clinicalCall")) %>%
+  filter(Hugo_Symbol!="TERT") # remove TERT
+
+# variant matrix
+Vchange.mx= tmp%>% reshape2::dcast(.,Hugo_Symbol~patientID,fun.aggregate = function(x) paste(unique(x),collapse = ";"),value.var="Protein_Change") %>% tibble::column_to_rownames("Hugo_Symbol")
+
+Vsource.mx= tmp%>% reshape2::dcast(.,Hugo_Symbol~patientID,fun.aggregate = function(x) paste(unique(x),collapse = ";"),value.var="source") %>% tibble::column_to_rownames("Hugo_Symbol")
+
+Vsource2.mx=Vsource.mx
+Vsource2.mx[which(matrix(grepl(";", unlist(Vsource2.mx)), dim(Vsource2.mx)), arr.ind = TRUE)]="bothCall"
+
+# manually check multi-hits
+MultiHits.ind=which(matrix(grepl(";", unlist(Vchange.mx))&!grepl("fs|Splice_Site",unlist(Vchange.mx)), dim(Vchange.mx)), arr.ind = TRUE)
+VClass.mx= tmp%>% reshape2::dcast(.,Hugo_Symbol~patientID,fun.aggregate = function(x) paste(unique(x),collapse = ";"),value.var="Variant_Classification")  %>% tibble::column_to_rownames("Hugo_Symbol")
+VClass.mx[MultiHits.ind]="Multi_Hit"
+
+VClass_source.mx=matrix( paste(unlist(VClass.mx),unlist(Vsource2.mx), sep="@"), 
+        nrow=nrow(VClass.mx), dimnames=dimnames(VClass.mx) ) %>% apply(., c(1,2), function(x)gsub("^@|@$","",x))
+# save(VClass_source.mx,VClass.mx,file=file.path(output_dir,"VClass_source.mx.RData"))
+
+# oncoplot variant classification
+# set colors
+vc_col = maftools:::get_vcColors(websafe = FALSE)
+vc_col = c(vc_col, "5'Flank" = "maroon" ,"Frame_Shift"="#3483eb", "Rearrangement"="#49e3db")
+vc_col[["Missense_Mutation"]]="#8ca03c"
+vc_col[["In_Frame_Ins"]]="#e66eb4"
+  
+VClasses=VClass.mx%>%as.data.frame%>%unlist%>% unique%>%.[.!=""]
+
+alterFuncs=list()
+for(a in c(VClasses)){
+  col2fill=vc_col[a]
+  for(b in c("clinicalCall","researchCall","bothCall")){
+    if(b=="clinicalCall"){
+      alterF=parse(text=sprintf("function(x, y, w, h) {w=0.9*w;h=0.9*h;grid.rect(x, y, w, h, gp = gpar(fill = '%s', col = NA))}",col2fill))%>%eval
+    }else if(b=="researchCall"){
+      alterF=parse(text=sprintf("function(x, y, w, h) {w=0.9*w;h=0.9*h;grid.circle(x, y, w/2, gp = gpar(fill = '%s', col = NA))}",col2fill))%>%eval
+    }else if(b=="bothCall"){
+      alterF=parse(text=sprintf("function(x, y, w, h) {w=0.9*w;h=0.9*h;grid.polygon(x=c(x-0.5*w,x,x+0.5*w,x), y=c(y,y+0.5*h,y,y-0.5*h), gp = gpar(fill = '%s', col = NA))}",col2fill))%>%eval
+      # alterF=parse(text=sprintf("function(x, y) grid.polygon(x, y, gp = gpar(fill = '%s', col = NA))",col2fill))%>%eval
+    }
+    alterFuncs[[paste(a,b,sep="@")]]=alterF
+    alterFuncs[["background"]]=function(x, y, w, h) {w=0.9*w;h=0.9*h;grid.rect(x, y, w, h,gp = gpar(fill = "#F6F6F6",col = NA))}
+  }
+}
+
+
+# get sample source
+sampleDates=R.utils::loadToEnv(file.path("..","deID_MDLcalls.RData"))[["sampleDates"]]
+callSource=sampleDates %>% filter(daysFromTx2collect<0) %>% dplyr::select(patientID,source,collectDate) %>% unique() %>%
+  reshape2::dcast(patientID~source) %>%
+  tibble::column_to_rownames("patientID") %>%
+  apply(., 1, function(x) paste(colnames(.)[x>0],collapse=";")) %>% gsub(" mutation calls","",.) %>%
+  replace(.,grepl(";",.),"both")
+
+# build heatmap track
+anno_DNA=with(
+  clinical_info %>% .[match(colnames(VClass_source.mx),.[["patientID"]]),] %>%
+    cbind(., platform=callSource[.[["patientID"]]]
+          # CNV_EGFR=CNV.EGFR[.[["patientID"]]]
+          ),
+  HeatmapAnnotation(
+  OS=anno_barplot(Survival_days,gp=gpar(col=ifelse(Status=="1","red","green"))),
+  Age=anno_barplot(AGE),
+  Sex=factor(GENDER),
+  `MGMT Methylation`=factor(MGMT),
+  platform=factor(platform),
+  col=list(
+    `Co-cluster`=c("Cluster 1"="red","Cluster 2"="blue"),
+    Sex=c(M="#42A13E",F="#D768A2"),
+    `MGMT Methylation`=c("Methylated"="#42A13E","Unmethylated"="#D768A2","Unknown "="lightgrey","Indeterminate"="lightgrey"),
+    platform=c("research"="#42A13E","clinical"="#D768A2","both"="#e3a1a9"),
+    CNV_EGFR=c("Amp"="#D768A2"),
+    Dexamethasone=c("TRUE"="#42A13E","FALSE"="lightgrey")
+    )))
+
+# output oncoprint
+# svglite::svglite(file = file.path("F2a_oncoprint.svg"),width = 9,height=8)
+
+ComplexHeatmap::draw(oncoPrint(VClass_source.mx,
+    alter_fun = alterFuncs,
+    col = vc_col,
+    remove_empty_columns = TRUE, remove_empty_rows = TRUE,
+    alter_fun_is_vectorized = FALSE,
+    # top_annotation = expr::getHeatMapAnnotation(
+    #   sampleAttr = clinical_info %>% .[match(colnames(VClass.mx),.[["patientID"]]),] %>%  dplyr::rename("OS"="Survival_days","vital_status"="Status"),
+    #   tracks = c("OS","vital_status","AGE","GENDER","MGMT")),
+    top_annotation = anno_DNA,
+    ),
+    annotation_legend_side = "bottom"
+    )
+
+# dev.off()
+
+```  
+
+```{r CNV}
+require(maftools)
+require(ComplexHeatmap)
+
+DNA_sample_info=R.utils::loadToEnv(file.path("..","deID_sample_info.RData"))[["sample_info"]][["DNA_sample_info"]]
+DNA_sample_info=left_join(DNA_sample_info,clinical_info)
+
+
+# ---- cohor-wide CNV profile ----
+# read gistic output
+gistic = maftools::readGistic(
+  gisticAllLesionsFile = file.path("..","deID_all_lesions.conf_99.txt"),
+  gisticAmpGenesFile = file.path("../../../GBM_04_28_2022/Gistic2_output","amp_genes.conf_99.txt"),
+  gisticDelGenesFile = file.path("../../../GBM_04_28_2022/Gistic2_output","del_genes.conf_99.txt"),
+  gisticScoresFile = file.path("../../../GBM_04_28_2022/Gistic2_output","scores.gistic"))
+
+
+# plot cohort-wise gistic score
+# svglite::svglite(file = file.path("FS2a_gisticChromPlot.svg"),width = 7,height = 5)
+maftools::gisticChromPlot(gistic = gistic, markBands = "all",fdrCutOff = 0.05)
+# dev.off()
+
+
+#----get CN cluster ----
+# read in CNV segments first line as header
+segments<-read.table(file.path("..","deID_GBM_isar_transformed_segments.txt"),sep="\t",stringsAsFactors = F,check.names = F,header = T)
+
+bin_segments<-lapply(unique(segments$sample),function(samp){
+  data=segments[segments$sample==samp,]
+  gr=df2granges(df=data,genome="hg19",seqlevelsStyle = "NCBI",meta_cols = "segmean")
+  bingenome<-bingranges(gr)
+  return(bingenome$segmean)})
+bin_segments<-do.call(cbind,bin_segments)
+colnames(bin_segments)<-unique(segments$sample)
+bin_segments=bin_segments[,DNA_sample_info$Sample_ID]
+bin_segments_<-bin_segments[!duplicated(bin_segments),]
+
+# prepare unsupervised data
+uns_bin_segments<-prepare_unsupervised_data(bin_segments_,method="MAD",mad_top_n = 1000,remove_outlier = F)
+
+bingenome<-bingranges(df2granges(df=segments[segments$sample==segments$sample[1],],genome="hg19",seqlevelsStyle = "NCBI",meta_cols = "segmean")) # get genome info
+seq_df<-data.frame(seq=as.character(seqnames(bingenome)),seq_name="") # get seq info
+
+for(chr in paste("chr",as.character(1:22),sep="")){
+  seq_df$seq_name[floor((min(which(seq_df$seq==chr))+max(which(seq_df$seq==chr)))/2)]<-chr
+} # get seq name
+
+# draw heatmap
+seq_colors<-rep(c("grey","black"),11)
+names(seq_colors)<-paste("chr",as.character(1:22),sep="")
+ha<-rowAnnotation(text=anno_text(seq_df$seq_name,gp=gpar(fontsize=8)),seq=seq_df$seq,show_legend=F,col=list(seq=seq_colors),show_annotation_name=F)
+
+
+col_fun<-circlize::colorRamp2(c(-1.5,-0.3,0,0.3,1.5),c("blue","white","white","white","red"))
+col_fun = circlize::colorRamp2(c(-2, 0, 2), c("#14448C", "white", "#B85A5B"))
+col_fun = circlize::colorRamp2(c(-2,-0.3,0,0.3,2), c("#14448C", "white","white","white",  "#B85A5B"))
+anno_DNA<-with(DNA_sample_info,HeatmapAnnotation(
+  OS=anno_barplot(Survival_days,gp=gpar(col=ifelse(Status=="1","red","green"))),
+  Age=anno_barplot(AGE),
+  Sex=factor(GENDER),
+  `MGMT Methylation`=factor(MGMT),
+  col=list(
+    `Co-cluster`=c("Cluster 1"="red","Cluster 2"="blue"),
+    Sex=c(M="#42A13E",F="#D768A2"),
+    `MGMT Methylation`=c("Methylated"="#42A13E","Unmethylated"="#D768A2","Unknown "="lightgrey","Indeterminate"="lightgrey"),
+    Dexamethasone=c("TRUE"="#42A13E","FALSE"="lightgrey")
+    )))
+
+cn_heatmap<-draw(Heatmap(
+  bin_segments[,DNA_sample_info$Sample_ID],
+  name="copynumber",
+  col=col_fun,
+  cluster_rows = F,
+  cluster_columns = hclust(as.dist(1-cor(t(scale(t(uns_bin_segments))),method="spearman"))),
+  column_dend_reorder = T,
+  column_split = 2,
+  top_annotation = anno_DNA,
+  left_annotation = ha,
+  show_column_names = F
+  ))
+
+# svglite::svglite(filename=file.path("FS2c_SegmentsCluster_Heatmap.n29.svg"),width = 8,height=8)
+cn_heatmap
+# dev.off()
+
+```
+
+## Unsupervised cluster-based analysis identifies key molecular features associated with anti-PD-L1-treatment patient overall survival 
+
+```{r mutation-profile-clustering, echo=TRUE, message=FALSE, warning=FALSE}
+#---- PTEN/EGFR -----
+load(file.path("..","deID_pynbs.RData"))
+
+EGFR_PTEN=combinedCalls %>% filter(Hugo_Symbol %in% c("EGFR","PTEN")) %>%
+  dplyr::rename("alteration"="Protein_Change")
+
+EGFR_PTEN.bin=EGFR_PTEN %>% reshape2::dcast(patientID~Hugo_Symbol,value.var="alteration",fun.aggregate = function(x) paste(x,collapse = ";"))
+
+EGFR_PTEN.bin=left_join(sampleDates %>% filter(daysFromTx2collect<0) %>% select(patientID) %>% unique ,EGFR_PTEN.bin)
+EGFR_PTEN.bin=EGFR_PTEN.bin %>% apply(.,2,function(x) {x[x==""]=NA;reassignNA(x,"WT")})%>% as.data.frame()
+EGFR_PTEN.bin$Mutation=EGFR_PTEN.bin[,-1] %>% apply(.,1, function(x) paste(colnames(.)[trimws(x)!="WT"],collapse=";"))
+EGFR_PTEN.bin$Mutation=EGFR_PTEN.bin$Mutation %>% replace(.,.=="","WT")
+
+anno_DNA=with(
+  clinical_info %>% 
+    .[match(DNA_sample_info[["patientID"]],.[["patientID"]]),] %>%
+    cbind(.,Mutation=EGFR_PTEN.bin[match(.[["patientID"]],EGFR_PTEN.bin[["patientID"]]),"Mutation"]),
+  HeatmapAnnotation(
+    OS=anno_barplot(Survival_days,gp=gpar(col=ifelse(Status=="1","red","green"))),
+    Age=anno_barplot(AGE),
+    Sex=factor(GENDER),
+    `MGMT Methylation`=factor(MGMT),
+    `EGFR/PTEN`=factor(Mutation),
+    dexamethasone=factor(as.character(dexamethasone)),
+    # platform=factor(platform),
+    col=list(
+      `Co-cluster`=c("Cluster 1"="red","Cluster 2"="blue"),
+      Sex=c(M="#0788A3",F="#FF9376"),
+      `EGFR/PTEN`=c("EGFR"="#D37F7F","PTEN"="#54A498","EGFR;PTEN"="#42d6c1","WT"="lightgrey"),
+      `MGMT Methylation`=c("Methylated"="#42A13E","Unmethylated"="#D768A2","Unknown "="lightgrey","Indeterminate"="lightgrey"),
+      platform=c("research"="#874537","clinical"="#105446","both"="#F3A933"),
+      dexamethasone=c("TRUE"="#42A13E","FALSE"="lightgrey")
+      )))
+
+
+pynbs_cluster = left_join(pynbs_cluster %>% tibble::rownames_to_column("Sample_ID"),DNA_sample_info)
+
+pynbs_matrix=pynbs_matrix[DNA_sample_info$Sample_ID,DNA_sample_info$Sample_ID]
+
+DNA_heatmap<-Heatmap(
+  t(scale(t(pynbs_matrix))),
+  top_annotation = anno_DNA,
+  show_column_names = F,
+  # cluster_columns = cluster_within_group(t(scale(t(gene_expression_for_unsupervised))),km_rc$clusters),
+  show_row_names = F,column_split = 2)
+
+# svglite::svglite(file = file.path(output_dir,"F2b_mutationcluster.svg"),width = 9,height=6)
+draw(DNA_heatmap)
+# dev.off()
+
+
+
+#---- KM ----
+# svglite::svglite(filename=file.path("F2c_PTENEGFR_KM.svg"),width = 4.5,height=5)
+plotKM(survdf = cbind(EGFR_PTEN.bin,clinical_info[EGFR_PTEN.bin$patientID,]),
+       duration = "Survival_days", conversion = "d2m", censoring = "Status", variable = "Mutation",
+       palette = c("red","blue"),OrderedVarFactor = c("EGFR","PTEN"))
+# dev.off()
+```
+
+````{transctiption-profile-clustering, echo=TRUE, message=FALSE, warning=FALSE}
+lapply(c("stats","cluster","mclust","dbscan","MCL","skmeans","NMF","kernlab","apcluster","kohonen","ggcorrplot"), require, character.only = TRUE)
+
+load(file.path("..","deID_log2TPM.RData"))
+
+RNA_sample_info=R.utils::loadToEnv(file.path("..","deID_sample_info.RData"))[["sample_info"]][["RNA_sample_info"]]
+RNA_sample_info=left_join(RNA_sample_info,clinical_info)
+
+# prepare maximum variance genes for unsupervised data
+gene_expressions=gene_expressions[,RNA_sample_info$Sample_ID]
+unsupervised_expressions = prepare_unsupervised_data(gene_expressions,method="DQ",cv_top_n = 1000,mad_top_n = 1000,dq_top_mean_quantile = 0.75,dq_top_var_quantile = 0.9,remove_outlier = T)
+
+# concensus clustering
+# if(!file.exists(file.path(output_dir,"res_ccC_RNA.n39.RData"))){
+  optK=2
+getMultiCluster=function(){
+  result=multiCluster(
+    data = unsupervised_expressions,
+    scale="row",
+    bestnumberofclusters=optK,
+    cluster_methods=c("kmeans","pam","hclust","fuzzy","mclust","apclust","hdbscan","MCL","specc","kkmeans","skmeans","nmf","som")
+  )
+  return(result)}
+result=suppressWarnings(suppressMessages(getMultiCluster()))
+
+cutFUNs=names(result$rand.sim)[sapply(result$rand.sim, function(x) sum(x,na.rm = T)>0)]
+InputParams=data.frame(
+  `Number of clusters`=optK,
+  `Number of iterations`= 100, #params$Nit,
+  `Faction of features (genes) used per iteration`=0.8,
+  `Faction of samples being clustered per iteration`=1,
+  check.names = F
+)
+
+
+ccC=consensusCluster(
+  data = unsupervised_expressions,
+  method="bootstrap",
+  subFeatureSize=InputParams$`Faction of features (genes) used per iteration`,
+  subSampleSize=InputParams$`Faction of samples being clustered per iteration`,
+  cutFUN=cutFUNs,
+  nTimes=InputParams$`Number of iterations`,clusters=optK,verbose=F)
+res_ccC=ccC
+# save(res_ccC,file=file.path(output_dir,"res_ccC_RNA.n39.RData"))
+
+# ccCtree=rev(as.dendrogram(hclust(as.dist(1-res_ccC)))) # reverse cluster 1 and 2
+ccC=cutree(hclust(as.dist(1-res_ccC)),optK)
+
+
+# plot heatmap
+anno_RNA<-with(
+  RNA_sample_info %>% mutate(patientID=as.character(patientID)),
+  HeatmapAnnotation(
+  OverallSurvival=anno_barplot(Survival_days,gp=gpar(col=ifelse(RNA_sample_info$Status=="1","red","green"))),
+  Age=anno_barplot(RNA_sample_info$AGE),
+    # GFAP=anno_barplot(GFAP.average),
+  GENDER=factor(GENDER),
+  `MGMT Methylation`=factor(MGMT),
+  col=list(
+    `Co-cluster`=c("Cluster 1"="red","Cluster 2"="blue"),
+    GENDER=c(M="#42A13E",F="#D768A2"),
+    `MGMT Methylation`=c("Methylated"="#42A13E","Unmethylated"="#D768A2","Unknown "="lightgrey","Indeterminate"="lightgrey")
+    )
+  ))
+
+
+col_fun = circlize::colorRamp2(c(-2, 0, 2), c("#14448C", "white", "#B85A5B"))
+RNA_heatmap<-Heatmap(
+  t(scale(t(unsupervised_expressions))),
+  col = col_fun,
+  top_annotation = anno_RNA,
+  name = "expression\nzscore",
+  cluster_columns =ccCtree,# cluster_within_group(t(scale(t(gene_expression_for_unsupervised))),ccC[RNA_sample_info$Sample_ID]),
+  show_row_names = F,show_column_names = F,show_column_dend = F,show_row_dend = F, column_split = 2)
+
+# svglite::svglite(filename=file.path("F2e_ExpressionCluster_heatmap.n39.svg"),width = 7,height=6)
+draw(RNA_heatmap)
+# dev.off()
+
+RNA_cluster=setNames(rep(c("Cluster_1","Cluster_2"),unlist(sapply(column_order(RNA_heatmap),length))),RNA_sample_info$Sample_ID[unlist(column_order(RNA_heatmap))])
+
+#---- output boxplot ----
+MOI= c("C1QA","C1QB","FCER1G","COL1A1","COL1A2","COL3A1")
+MOI %in% rownames(unsupervised_expressions)
+bp=expr::plotBoxPlot(
+  data_mx = unsupervised_expressions,
+  MOI = MOI,
+  yFreeScale = T,
+  showP = F,
+  sampleAttr = RNA_sample_info %>% cbind(.,`TXN_Cluster`=RNA_cluster[.[["Sample_ID"]]]) %>% mutate(TXN_Cluster=factor(TXN_Cluster,levels=c("Cluster_1","Cluster_2"))) ,
+  header4x = "TXN_Cluster",header4color = "TXN_Cluster",header4ID = "Sample_ID") 
+
+# ggsave(bp,filename=file.path(output_dir,"FS2b_boxplot.svg"),width = 7.5,height = 4)
+
+#---- output KM plot for mRNA cluster ----
+svglite::svglite(filename=file.path(output_dir,"F2f_ExpressionCluster_KM.svg"),width = 4.5,height=5)
+plotKM(survdf=RNA_sample_info %>% cbind(.,`TXN_Cluster`=RNA_cluster[.[["Sample_ID"]]]),
+       duration="Survival_days",censoring="Status",variable="TXN_Cluster",
+       palette=c("blue","red"),OrderedVarFactor=c("Cluster_1","Cluster_2"),
+       conversion="d2m",
+       plotTitle=NULL,table_base_size=6)
+dev.off()
+
+
+````
+
+
+## Gene set enrichment analysis of tumors from patients with higher vs. lower mOS 
+
+```{r}
+
+# survival category
+survival_cutoff=490.5
+RNA_sample_info$Survival_Category=ifelse(RNA_sample_info$Survival_days>survival_cutoff,"Long","Short")
+
+anno_OSG<-with(
+  RNA_sample_info %>% mutate(patientID=as.character(patientID)),
+  HeatmapAnnotation(
+  OS=anno_barplot(Survival_days,gp=gpar(col=ifelse(Status=="1","red","green"))),
+  Age=anno_barplot(AGE),
+  GENDER=factor(GENDER),
+  MGMT=factor(MGMT,levels = c("Methylated","Unmethylated","Indeterminate")),
+  col=list(
+    Sex=c("Male"="#0788A3","Female"="#FF9376"),
+    MGMT=c("Methylated"="#42A13E","Unmethylated"="#D768A2","Indeterminate"="lightgrey")
+  ),
+annotation_name_side="left"))
+col_fun = circlize::colorRamp2(c(-4, 0, 4), c("#14448C", "white", "#7D2828"))
+# if(!dir.exists(output_dir_OSG_Statistics)){dir.create(output_dir_OSG_Statistics,recursive = T)}
+OS_test<-dge_limma(
+  gene_expressions,
+  is_rawcount = F,is_logged = T,normalize = T,sample_frequency_threshold = 0.5,
+  clinic_info = RNA_sample_info,
+  ID_col = "Sample_ID",group_col = "Survival_Category",contrasts = c("Long-Short"),method ="limma_trend")
+statistics<-OS_test$statistics
+# write.csv(statistics,file=file.path(output_dir_OSG_Statistics,"OS_statistics.csv"))
+heatmap_data<-gene_expressions[rownames(statistics[statistics$`Long-Short:P.Value`<=0.05,]),as.character(RNA_sample_info$Sample_ID)]
+
+#---- output boxplot ----
+
+plotBoxPlot=function(data_mx,sampleAttr,MOI,header4x,header4color=NULL,header4ID,palette= "Dark2",showP=T,yFreeScale=F,pmethod="wilcox.test"){
+  df=as.data.frame(t(data_mx[MOI,]))
+  df[,header4ID]=rownames(df)
+  df[,header4x]=sampleAttr[match(df[,header4ID],sampleAttr[,header4ID]),header4x]
+  if(!is.null(header4color)){
+    df[,header4color]=sampleAttr[match(df[,header4ID],sampleAttr[,header4ID]),header4color]
+    df=df[!is.na(df[,header4x])&!is.na(df[,header4color]),]
+    
+    df=reshape2::melt(df,id.vars=c(header4ID,header4x,header4color))
+    df=df[!duplicated(as.list(df))]
+    
+    p=ggpubr::ggboxplot(df, x = header4x ,
+                        y = "value",
+                        combine = TRUE,
+                        # merge = "flip",
+                        ylab = "Value",
+                        add = "jitter",                               # Add jittered points
+                        add.params = list(size = 0.5, jitter = 0.1),
+                        color = header4color ,
+                        palette = palette)
+  }else{
+    df=df[!is.na(df[,header4x]),]
+    
+    df=reshape2::melt(df,id.vars=c(header4ID,header4x))
+    df=df[!duplicated(as.list(df))]
+    
+    p=ggpubr::ggboxplot(df, x = header4x ,
+                        y ="value",
+                        combine = TRUE,
+                        # merge = "flip",
+                        ylab = "Value",
+                        add = "jitter",                               # Add jittered points
+                        add.params = list(size = 0.5, jitter = 0.1),
+                        palette = palette)
+  }
+  
+  if(yFreeScale){
+    p=ggpubr::facet(
+      p,
+      facet.by="variable",
+      scales = "free_y")
+  }else{
+    p=ggpubr::facet(
+      p,
+      facet.by="variable")
+  }
+  
+  if(showP){
+    p=p+ggpubr::stat_compare_means(method=pmethod)
+  }
+
+  return(p)
+}
+bp=plotBoxPlot(header4x = "Survival_Category",header4color = "Survival_Category",header4ID = "Sample_ID",
+  data_mx = heatmap_data,
+  sampleAttr = RNA_sample_info,
+  MOI = c("CD14","CD86", "CCR2", "CCR5", "HAVCR2", "HLA-A"),
+  yFreeScale=T,
+  pmethod="t.test",
+  showP = F
+  )
+
+ggsave(bp,device = "svg", filename= file.path("F3b_DGE2OS_boxplot.svg"), width = 7.2, height = 5)
+
+#---- cytolytic score ----
+
+tmp=cbind(
+  `cytolytic score`=apply(gene_expressions[c("GZMA","PRF1"),] %>% 2^.-1,2,mean),
+  `CD8A/B`=apply(gene_expressions[c("CD8A","CD8B"),] %>% 2^.-1,2,mean)) %>%
+  t
+tmp=log2(tmp+1)
+bp=plotBoxPlot(header4x = "Survival_Category",header4color = "Survival_Category",header4ID = "Sample_ID",
+  data_mx =tmp,
+  sampleAttr = RNA_sample_info,
+  MOI = c("cytolytic score","CD8A/B"),
+  yFreeScale=T,
+  pmethod="wilcox.test",
+  showP =T
+  )
+ggsave(bp,device = "svg", filename= file.path(output_dir,"F3c_DGE2OS_cytolyticScore_boxplot.2.svg"), width = 6.8, height = 3.5)
+
+#---- hallmark pathway ----
+ht=Heatmap(
+  t(scale(t(heatmap_data))),
+  name="expression_z_score",
+  col = col_fun,
+  cluster_columns = cluster_between_groups(t(scale(t(heatmap_data))),factor=RNA_sample_info$Survival_Category),
+  show_column_dend = F,top_annotation = anno_OSG,show_row_names = F,column_split = 2,show_column_names = F)
+
+require(fgsea)
+require(pathfindR) #cluster_enriched_terms
+
+
+
+
+
+
+# ---- read in hallmark pathways ----
+
+load(system.file("extdata/pathway.nano_hallmarkv2022.1.RData",package = "expr"))
+hallmark_pathway=pathway%>% .[grepl("HALLMARK",names(pathway))]
+gsea_res<-gsea(
+  statistics=statistics,
+  output_dir = file.path("hallmark_pathway"),
+  logFC_col = "Long-Short:logFC",pval_col = "Long-Short:P.Value",
+  pathways = hallmark_pathway,padj_cutoff = 0.05)
+
+write(names(gsea_res$sig_pathways),file = file.path(output_dir,"R_F3_significant_hallmark_pathway.txt"))
+
+
+pathway_colors<-c("#006400","#bc8f8f","#ff0000","#ffd700","#00ff00","#00ffff","#1e90ff") #" #a020f0"
+names(pathway_colors)<-c("HALLMARK_ALLOGRAFT_REJECTION",
+                         "HALLMARK_IL6_JAK_STAT3_SIGNALING",
+                         "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+                         "HALLMARK_COMPLEMENT",
+                         "HALLMARK_INFLAMMATORY_RESPONSE",
+                         "HALLMARK_INTERFERON_ALPHA_RESPONSE",
+                         "HALLMARK_IL2_STAT5_SIGNALING")
+
+
+svglite::svglite(filename = file.path(output_dir,"F3_sig_genes_sankeyheatmap.hallmark_pathway.svg"),width = 7,height=5)
+sankey_heatmap(
+  sankey_width=unit(1.9, "in"),
+  sig_expressions=heatmap_data,
+  scale = T,
+  pathways = gsea_res$sig_pathways[names(pathway_colors)],
+  pathway_colors = pathway_colors,
+  keep_other = F,
+  line_size = 4,show_row_names=F,show_column_names=F,
+  col = col_fun,
+  top_annotation=anno_OSG,cluster_columns=cluster_between_groups(t(scale(t(heatmap_data))),factor = RNA_sample_info$Survival_Category),
+  # up_genes = up_genes, down_genes = down_genes,
+  show_column_dend=F,name="zscore",
+  # sankey_anno_text_side = "outer",
+  text_size=6,column_split=2)
+dev.off()
+
+
+```
+
+## Highly immune infiltrated GBM tumors are associated with specific immune cell types, the mesenchymal GBM subtype, and fecal microbiome profiles.
+
+```{r}
+```
+
+
