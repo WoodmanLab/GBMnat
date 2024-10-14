@@ -1,4 +1,4 @@
-[![DOI](https://zenodo.org/badge/870420404.svg)](https://zenodo.org/badge/latestdoi/870420404
+[![DOI](https://zenodo.org/badge/870420404.svg)](https://zenodo.org/badge/latestdoi/870420404)
 
 # GBM - Correlative analysis 
 
