@@ -6,4 +6,4 @@ This repository hosts code supporting genomic, transcriptomic and multiplex immu
 
 ## Reference
 
-Weathers S.P. , Li X., Zhu H., Damania A.V., Knafl M. et. al. (In Review). Improved overall survival in an anti-PD-L1 treated cohort of newly diagnosed glioblastoma patients is associated with distinct immune, mutation, and gut microbiome features 
+Weathers, SP., Li, X., Zhu, H. et al. Improved overall survival in an anti-PD-L1 treated cohort of newly diagnosed glioblastoma patients is associated with distinct immune, mutation, and gut microbiome features: a single arm prospective phase I/II trial. Nat Commun 16, 3950 (2025). https://doi.org/10.1038/s41467-025-56930-7.
